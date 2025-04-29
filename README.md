@@ -27,14 +27,13 @@
 
 
 
-
-## Data Orchestrator
-
+## Data Orchestrator란
 
 
 ## 핵심 구성 요소
 
-### Op
+<details>
+<summary><h3>Op</h3></summary>
 
 - 단일 작업 단위(함수)
 - 재사용 및 조합 가능, graph 내에서 연결하여 사용
@@ -49,8 +48,10 @@ def extract_data():
 def transform_data(data):
     return {"transformed_data": [x * 2 for x in data["data"]]}
 ```
+</details>
 
-### Graph
+<details>
+<summary><h3>Graph</h3></summary>
 
 - 여러 Op을 연결하여 데이터 흐름을 정의하는 파이프라인 구조
 
@@ -62,8 +63,10 @@ def etl_process():
     transformed = transform_data(data)
     return transformed
 ```
+</details>
 
-### Job
+<details>
+<summary><h3>Job</h3></summary>
 
 - 실행 가능한 단위로, Graph, Op 혹은 Asset 등으로 구성
 
@@ -80,13 +83,16 @@ asset_job = dg.define_asset_job(
     selection=["daily_extract", "daily_transform", "daily_load"]
 )
 ```
+</details>
 
-### Asset
+<details>
+<summary><h3>Asset</h3></summary>
 
-- 파이프라인 실행의 결과로 생성되는 데이터 객체(table, file, ml model 등)
-- 데이터 중심, 명시적 의존성, 데이터 계보(lineage) 추적
+- 파이프라인 실행의 결과로 생성되는 데이터 객체(table, file, ml model,..)
+- 데이터 중심, 명시적 의존성, 데이터 lineage 추적
 
-**기본 예제:**
+
+**예제:**
 ```python
 @dg.asset
 def raw_data():
@@ -97,16 +103,7 @@ def cleaned_data(raw_data):
     return raw_data.dropna()
 ```
 
-#### @asset 데코레이터
-
-가장 기본적인 자산 정의 방법으로, 하나의 함수가 하나의 자산을 생성합니다.
-
-**특징:**
-- 단일 데이터 산출물 생성
-- 기본적으로 함수명이 자산명이 됨
-- 간단하고 명확한 구조
-
-**예제:**
+케이크 제작 파이프라인에서의 자산 예시:
 ```python
 @dg.asset(
     metadata={
@@ -120,109 +117,71 @@ def ingredients():
     # 구현 코드...
     return dg.MaterializeResult(metadata={...})
 ```
+</details>
 
-#### @multi_asset
+## Asset 유형
 
-하나의 함수에서 여러 자산을 생성합니다.
+<details>
+<summary><h3>@asset</h3></summary>
 
-**특징:**
-- 한 번의 실행으로 여러 자산 생성
-- `yield` 구문으로 여러 자산 반환
-- `outs` 매개변수로 출력 자산 정의
+가장 기본적인 자산 정의 방법으로, 하나의 함수가 하나의 자산을 생성
 
-**예제:**
-```python
-@dg.multi_asset(
-    outs={
-        "production_analysis": dg.AssetOut(description="케이크 생산량 기본 분석"),
-        "type_distribution": dg.AssetOut(description="케이크 타입별 분포"),
-        "top_cakes": dg.AssetOut(description="가장 많이 생산된 케이크 목록")
-    },
-    deps={"baked_cakes": baked_cakes}
-)
-def cake_analysis(baked_cakes):
-    # 분석 코드...
-    yield dg.MaterializeResult(
-        metadata={...},
-        asset_key="production_analysis"
-    )
-    yield dg.MaterializeResult(
-        metadata={...},
-        asset_key="type_distribution"
-    )
-    yield dg.MaterializeResult(
-        metadata={...},
-        asset_key="top_cakes"
-    )
-```
-
-#### @graph_asset
-
-여러 Op을 조합하여 하나의 자산을 생성합니다.
-
-**특징:**
-- Op 기반의 복잡한 로직을 자산으로 표현
-- 세분화된 단계를 가진 자산 생성 과정
-- 각 단계가 재사용 가능한 Op으로 정의됨
 
 **예제:**
 ```python
-@dg.op
-def fetch_recipes():
-    # 레시피 데이터 가져오기
-    return recipe_data
-
-@dg.op
-def process_recipes(recipes):
-    # 레시피 처리
-    return processed_recipes
-
-@dg.graph_asset
-def processed_recipe_data():
-    recipes = fetch_recipes()
-    return process_recipes(recipes)
+@dg.asset
+def ingredients():
+    # 레시피 정보 추출
+    return ingredients_list
 ```
+</details>
 
-#### @graph_multi_asset
+<details>
+<summary><h3>@multi_asset</h3></summary>
 
-여러 Op을 조합하여 여러 자산을 생성합니다 (`@graph_asset`과 `@multi_asset`의 기능 결합).
+하나의 함수에서 여러 자산을 생성
 
-**특징:**
-- 여러 단계의 Op에서 여러 자산 생성
-- 복잡한 데이터 프로세싱 과정을 모델링
 
 **예제:**
 ```python
-@dg.op
-def fetch_cake_data():
-    # 케이크 데이터 가져오기
-    return cake_data
 
-@dg.op
-def analyze_data(data):
-    # 데이터 분석
-    return analysis, distribution
-
-@dg.graph_multi_asset(
-    outs={
-        "cake_analysis": dg.AssetOut(description="케이크 분석"),
-        "cake_distribution": dg.AssetOut(description="케이크 분포")
-    }
-)
-def cake_analytics():
-    data = fetch_cake_data()
-    analysis, distribution = analyze_data(data)
-    return analysis, distribution
 ```
+</details>
 
-## 다른 asset에 dependency 주입 방법
+<details>
+<summary><h3>@graph_asset</h3></summary>
 
-두 자산(upstream-downstream) 간 의존성을 'deps'로 부여합니다.
-서로 다른 코드 로케이션에서도 의존성을 설정할 수 있습니다.
+여러 Op을 조합하여 하나의 자산을 생성
 
-### 기본 의존성 (Basic dependency)
 
 **예제:**
+```python
+
+```
+</details>
+
+<details>
+<summary><h3>@graph_multi_asset</h3></summary>
+
+여러 Op을 조합하여 여러 자산을 생성 (`@graph_asset`과 `@multi_asset`의 기능 결합)
+
+
+**예제:**
+```python
+
+```
+</details>
+
+
+## asset 간 의존성 설정
+
+두 자산(upstream-downstream)간 의존성을 'deps' 로 부여
+(different code locations 에서도 의존성 설정할 수 있음)
+
+<details>
+<summary><h3>basic dependency</h3></summary>
+
+**예제**
 ```python
 @dg.asset
 def sugary_cereals() -> None:
@@ -235,12 +194,13 @@ def sugary_cereals() -> None:
 def shopping_list() -> None:
     execute_query("CREATE TABLE shopping_list AS SELECT * FROM sugary_cereals")
 ```
+</details>
 
-### 서로 다른 코드 로케이션 (Different code locations)
+<details>
+<summary><h3>dependency in different 'code locations'</h3></summary>
 
-**예제:**
+**예제**
 ```python
-# 첫 번째 코드 로케이션
 @dg.asset
 def code_location_1_asset():
     with open("/tmp/data/code_location_1_asset.json", "w+") as f:
@@ -249,9 +209,7 @@ def code_location_1_asset():
 
 defs = dg.Definitions(assets=[code_location_1_asset])
 ```
-
 ```python
-# 두 번째 코드 로케이션
 @dg.asset(deps=["code_location_1_asset"])
 def code_location_2_asset():
     with open("/tmp/data/code_location_1_asset.json") as f:
@@ -260,3 +218,38 @@ def code_location_2_asset():
     with open("/tmp/data/code_location_2_asset.json", "w+") as f:
         json.dump(x + 6, f)
 ```
+</details>
+
+## asset간 데이터 전달 방법
+
+Dagster에서는 자산 간에 데이터를 전달하는 세 가지 주요 방법이 있습니다:
+
+<details>
+<summary><h3>1. external storage</h3></summary>
+
+
+**예제:**
+```python
+
+```
+</details>
+
+<details>
+<summary><h3>2. IO Managers</h3></summary>
+
+
+**예제:**
+```python
+
+```
+</details>
+
+<details>
+<summary><h3>3. </h3></summary>
+
+
+**예제:**
+```python
+
+```
+</details>
