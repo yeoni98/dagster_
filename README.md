@@ -702,5 +702,331 @@ storage:
 
 **예제 코드:**
 ```python
+import dagster as dg
+import os
+import json
+import glob
+from datetime import datetime
+import pandas as pd
 
+
+@dg.asset(required_resource_keys={"logger", "path_config"})
+def ingredients(context):
+    """레시피 파일에서 재료 정보를 추출합니다."""
+    # 리소스에서 경로 가져오기
+    path_config = context.resources.path_config
+    logger = context.resources.logger
+
+    # 레시피 파일 찾기
+    recipe_files = glob.glob(os.path.join(path_config["recipes_dir"], "recipe_*.json"))
+
+    logger.info(f"총 {len(recipe_files)}개의 레시피 파일을 발견했습니다.")
+
+    # 재료 정보 추출
+    ingredients_list = []
+    for file_path in recipe_files:
+        try:
+            with open(file_path, "r") as f:
+                recipe = json.load(f)
+                recipe_id = int(os.path.basename(file_path).split("_")[1].split(".")[0])
+
+                recipe_info = {
+                    "recipe_id": recipe_id,
+                    "name": recipe["name"],
+                    "ingredients": recipe["ingredients"]
+                }
+
+                ingredients_list.append(recipe_info)
+                logger.debug(f"레시피 로드 성공: {recipe['name']} (ID: {recipe_id})")
+        except Exception as e:
+            logger.error(f"파일 로드 오류 ({file_path}): {str(e)}")
+
+    # 결과 저장
+    os.makedirs(path_config["ingredients_dir"], exist_ok=True)
+    output_file = os.path.join(path_config["ingredients_dir"], "extracted_ingredients.json")
+    with open(output_file, "w") as f:
+        json.dump(ingredients_list, f, indent=2)
+
+    logger.info(f"{len(ingredients_list)}개의 레시피 정보를 {output_file}에 저장했습니다.")
+
+    # 파일에서 데이터 다시 로드하여 반환
+    with open(output_file, "r") as f:
+        loaded_ingredients = json.load(f)
+
+    # 데이터 반환
+    return dg.Output(
+        value=loaded_ingredients,
+        metadata={
+            "recipe_count": len(ingredients_list),
+            "unique_cake_types": len(set(recipe["name"] for recipe in ingredients_list)),
+            "output_file": dg.MetadataValue.path(output_file),
+            "recipes": dg.MetadataValue.json([r["name"] for r in ingredients_list])
+        }
+    )
+
+
+@dg.asset(deps=[ingredients], required_resource_keys={"logger", "path_config"})
+def mixed_dough(context, ingredients):
+    """추출된 재료 정보로 반죽을 만듭니다."""
+    # 리소스에서 경로 및 로거 가져오기
+    path_config = context.resources.path_config
+    logger = context.resources.logger
+
+    logger.info(f"총 {len(ingredients)}개 레시피의 반죽을 만듭니다.")
+
+    # 반죽 정보 생성
+    mixed_results = []
+
+    # 재료 이름 수집 (나중에 고유 재료 계산에 사용)
+    all_ingredient_names = []
+
+    for recipe in ingredients:
+        # 현재 레시피의 모든 재료 이름 수집
+        for ingredient in recipe["ingredients"]:
+            if "name" in ingredient:
+                all_ingredient_names.append(ingredient["name"])
+
+        dough = {
+            "recipe_id": recipe["recipe_id"],
+            "cake_type": recipe["name"],
+            "mix_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "ingredients_used": recipe["ingredients"]
+        }
+        mixed_results.append(dough)
+
+    # 결과 저장
+    output_dir = path_config["dough_dir"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    saved_file_count = 0
+    cake_types = {}
+
+    # 개별 파일로 저장
+    for i, dough in enumerate(mixed_results):
+        file_name = f"{dough['cake_type']}_dough_{dough['recipe_id']}_{i}.json"
+        file_path = os.path.join(output_dir, file_name)
+        with open(file_path, "w") as f:
+            json.dump(dough, f, indent=2)
+            saved_file_count += 1
+            logger.debug(f"반죽 저장 성공: {file_name}")
+
+        # 케이크 타입 카운트
+        cake_type = dough["cake_type"]
+        if cake_type not in cake_types:
+            cake_types[cake_type] = 0
+        cake_types[cake_type] += 1
+
+    # 모든 반죽 데이터를 하나의 파일로 저장
+    all_dough_file = os.path.join(output_dir, "all_mixed_dough.json")
+    with open(all_dough_file, "w") as f:
+        json.dump(mixed_results, f, indent=2)
+
+    logger.info(f"{saved_file_count}개의 반죽 정보를 {output_dir}에 저장했습니다.")
+
+    # 파일에서 데이터 다시 로드하여 반환
+    with open(all_dough_file, "r") as f:
+        loaded_dough = json.load(f)
+
+    # 데이터 반환
+    return dg.Output(
+        value=loaded_dough,
+        metadata={
+            "total_doughs": saved_file_count,
+            "output_directory": dg.MetadataValue.path(output_dir),
+            "all_dough_file": dg.MetadataValue.path(all_dough_file),
+            "cake_types": dg.MetadataValue.json(cake_types),
+            "unique_ingredients": len(set(all_ingredient_names)),  # 중복 없는 고유한 재료 수
+            "total_ingredients": len(all_ingredient_names)  # 총 사용된 재료 수
+        }
+    )
+
+
+@dg.asset(deps=[mixed_dough], required_resource_keys={"logger", "path_config"})
+def baked_cakes(context, mixed_dough):
+    """반죽을 사용하여 케이크를 굽습니다."""
+    # 리소스에서 경로 및 로거 가져오기
+    path_config = context.resources.path_config
+    logger = context.resources.logger
+
+    logger.info(f"총 {len(mixed_dough)}개의 반죽으로 케이크를 굽습니다.")
+
+    # 케이크 정보 생성
+    baking_results = []
+
+    # 재료 수 계산을 위한 변수
+    total_ingredients_count = 0
+
+    for dough in mixed_dough:
+        # 재료 수 계산
+        ingredients_count = len(dough["ingredients_used"])
+        total_ingredients_count += ingredients_count
+
+        cake = {
+            "recipe_id": dough["recipe_id"],
+            "cake_type": dough["cake_type"],
+            "baking_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "ingredients_used": dough["ingredients_used"],
+            "ingredients_count": ingredients_count  # 각 케이크별 재료 수
+        }
+        baking_results.append(cake)
+
+    # 결과 저장
+    output_dir = path_config["cakes_dir"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    saved_cake_count = 0
+    cake_types = {}
+
+    # 개별 파일로 저장
+    for i, cake in enumerate(baking_results):
+        file_name = f"{cake['cake_type']}_cake_{cake['recipe_id']}_{i}.json"
+        file_path = os.path.join(output_dir, file_name)
+        with open(file_path, "w") as f:
+            json.dump(cake, f, indent=2)
+            saved_cake_count += 1
+            logger.debug(f"케이크 저장 성공: {file_name}")
+
+        # 케이크 타입 카운트
+        cake_type = cake["cake_type"]
+        if cake_type not in cake_types:
+            cake_types[cake_type] = 0
+        cake_types[cake_type] += 1
+
+    # 모든 케이크 데이터를 하나의 파일로 저장
+    all_cakes_file = os.path.join(output_dir, "all_baked_cakes.json")
+    with open(all_cakes_file, "w") as f:
+        json.dump(baking_results, f, indent=2)
+
+    logger.info(f"{saved_cake_count}개의 케이크를 {output_dir}에 저장했습니다.")
+
+    # 파일에서 데이터 다시 로드하여 반환
+    with open(all_cakes_file, "r") as f:
+        loaded_cakes = json.load(f)
+
+    # 생산량 기준 정렬
+    sorted_production = sorted(
+        cake_types.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    # 데이터 반환
+    return dg.Output(
+        value=loaded_cakes,
+        metadata={
+            "total_cakes": saved_cake_count,
+            "output_directory": dg.MetadataValue.path(output_dir),
+            "all_cakes_file": dg.MetadataValue.path(all_cakes_file),
+            "cake_types": dg.MetadataValue.json(cake_types),
+            "most_produced_cake": sorted_production[0][0] if sorted_production else "none",
+            "most_produced_count": sorted_production[0][1] if sorted_production else 0,
+            "baking_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total_ingredients_used": total_ingredients_count,
+            "avg_ingredients_per_cake": round(total_ingredients_count / len(baking_results), 2) if baking_results else 0
+        }
+    )
+
+
+@dg.asset(deps=[baked_cakes], required_resource_keys={"logger", "path_config"})
+def cake_analysis(context, baked_cakes):
+    """완성된 케이크의 생산량을 분석합니다."""
+    # 리소스에서 경로 및 로거 가져오기
+    path_config = context.resources.path_config
+    logger = context.resources.logger
+
+    logger.info(f"총 {len(baked_cakes)}개 케이크에 대한 분석을 시작합니다.")
+
+    # 케이크 타입별 생산량 분석
+    cake_types = {}
+    for cake in baked_cakes:
+        cake_type = cake["cake_type"]
+        if cake_type not in cake_types:
+            cake_types[cake_type] = 0
+        cake_types[cake_type] += 1
+
+    # 생산량 기준 정렬
+    sorted_production = sorted(
+        cake_types.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    # 결과 저장 디렉토리 생성
+    output_dir = path_config["analysis_dir"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. 기본 생산량 분석 결과
+    basic_analysis = {
+        "total_cakes_produced": len(baked_cakes),
+        "cake_type_count": len(cake_types),
+        "most_produced_cake": sorted_production[0][0] if sorted_production else "none",
+        "most_produced_count": sorted_production[0][1] if sorted_production else 0,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    basic_analysis_file = os.path.join(output_dir, "cake_production_analysis.json")
+    with open(basic_analysis_file, "w") as f:
+        json.dump(basic_analysis, f, indent=2)
+
+    # 2. 케이크 타입별 분포 데이터
+    type_distribution = {cake_type: count for cake_type, count in cake_types.items()}
+
+    distribution_file = os.path.join(output_dir, "cake_type_distribution.json")
+    with open(distribution_file, "w") as f:
+        json.dump(type_distribution, f, indent=2)
+
+    # 3. 상위 케이크 목록 (상위 5개)
+    top_cakes = [
+        {
+            "rank": i + 1,
+            "cake_type": cake_type,
+            "count": count,
+            "percentage": (count / len(baked_cakes) * 100) if baked_cakes else 0
+        }
+        for i, (cake_type, count) in enumerate(sorted_production[:5])
+    ]
+
+    top_cakes_file = os.path.join(output_dir, "top_cakes.json")
+    with open(top_cakes_file, "w") as f:
+        json.dump(top_cakes, f, indent=2)
+
+    # 생산 결과를 CSV로도 저장
+    production_df = pd.DataFrame([
+        {"cake_type": cake_type, "total_produced": count}
+        for cake_type, count in cake_types.items()
+    ])
+
+    csv_file = os.path.join(output_dir, "cake_production_analysis.csv")
+    production_df.sort_values(by="total_produced", ascending=False).to_csv(
+        csv_file, index=False
+    )
+
+    logger.info(f"분석 결과를 {output_dir}에 저장했습니다.")
+
+    # 분석 결과 다시 로드하여 반환
+    with open(basic_analysis_file, "r") as f:
+        loaded_analysis = json.load(f)
+
+    with open(distribution_file, "r") as f:
+        loaded_distribution = json.load(f)
+
+    with open(top_cakes_file, "r") as f:
+        loaded_top_cakes = json.load(f)
+
+    # 데이터 반환
+    return dg.Output(
+        value={
+            "basic_analysis": loaded_analysis,
+            "type_distribution": loaded_distribution,
+            "top_cakes": loaded_top_cakes
+        },
+        metadata={
+            "total_cake_types": len(cake_types),
+            "total_cakes_produced": len(baked_cakes),
+            "analysis_file": dg.MetadataValue.path(basic_analysis_file),
+            "distribution_file": dg.MetadataValue.path(distribution_file),
+            "top_cakes_file": dg.MetadataValue.path(top_cakes_file),
+            "csv_file": dg.MetadataValue.path(csv_file)
+        }
+    )
 ```
