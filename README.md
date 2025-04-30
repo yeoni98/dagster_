@@ -643,9 +643,8 @@ def new_recipe_sensor(context):
 <details>
 <summary><h3>아티팩트 저장 및 관리</h3></summary>
 
-Dagster에서 아티팩트는 자산 실행의 결과로 생성되는 모든 유형의 파일이나 데이터입니다. 아티팩트의 저장 및 관리는 Dagster 인스턴스 설정(dagster.yaml)과 밀접하게 관련되어 있습니다.
 
-### 1. 작업 중인 데이터와 최종 산출물의 저장 위치
+### 1. asset 저장 위치
 
 * Dagster에서 자산(asset)의 실제 데이터(artifacts)는 IO Manager가 지정한 위치에 저장됩니다.
 * 기본적으로 FilesystemIOManager를 사용하면 로컬 파일 시스템에 저장됩니다.
